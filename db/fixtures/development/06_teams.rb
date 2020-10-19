@@ -1,14 +1,25 @@
-ActiveRecord::Base.observers.disable :all
+require './spec/support/sidekiq_middleware'
 
-Gitlab::Seeder.quiet do
-  Project.all.each do |project|
-    project.team << [User.first, :master]
-    print '.'
+Sidekiq::Testing.inline! do
+  Gitlab::Seeder.quiet do
+    Group.all.each do |group|
+      User.not_mass_generated.sample(4).each do |user|
+        if group.add_user(user, Gitlab::Access.values.sample).persisted?
+          print '.'
+        else
+          print 'F'
+        end
+      end
+    end
 
-    User.all.sample(rand(10)).each do |user|
-      role = [:master, :developer, :reporter].sample
-      project.team << [user, role]
-      print '.'
+    Project.not_mass_generated.each do |project|
+      User.not_mass_generated.sample(4).each do |user|
+        if project.add_role(user, Gitlab::Access.sym_options.keys.sample)
+          print '.'
+        else
+          print 'F'
+        end
+      end
     end
   end
 end

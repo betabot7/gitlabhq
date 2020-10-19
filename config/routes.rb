@@ -1,330 +1,290 @@
 require 'sidekiq/web'
-require 'api/api'
+require 'sidekiq/cron/web'
+require 'product_analytics/collector_app'
 
-Gitlab::Application.routes.draw do
-  #
+Rails.application.routes.draw do
+  concern :access_requestable do
+    post :request_access, on: :collection
+    post :approve_access_request, on: :member
+  end
+
+  concern :awardable do
+    post :toggle_award_emoji, on: :member
+  end
+
+  favicon_redirect = redirect do |_params, _request|
+    ActionController::Base.helpers.asset_url(Gitlab::Favicon.main)
+  end
+  get 'favicon.png', to: favicon_redirect
+  get 'favicon.ico', to: favicon_redirect
+
+  draw :sherlock
+  draw :development
+
+  use_doorkeeper do
+    controllers applications: 'oauth/applications',
+                authorized_applications: 'oauth/authorized_applications',
+                authorizations: 'oauth/authorizations',
+                token_info: 'oauth/token_info',
+                tokens: 'oauth/tokens'
+  end
+
+  # This prefixless path is required because Jira gets confused if we set it up with a path
+  # More information: https://gitlab.com/gitlab-org/gitlab/issues/6752
+  scope path: '/login/oauth', controller: 'oauth/jira/authorizations', as: :oauth_jira do
+    get :authorize, action: :new
+    get :callback
+    post :access_token
+
+    match '*all', via: [:get, :post], to: proc { [404, {}, ['']] }
+  end
+
+  draw :oauth
+
+  use_doorkeeper_openid_connect
+
+  # Sign up
+  scope path: '/users/sign_up', module: :registrations, as: :users_sign_up do
+    get :welcome
+    patch :update_registration
+    resource :experience_level, only: [:show, :update]
+
+    Gitlab.ee do
+      resources :groups, only: [:new, :create]
+      resources :projects, only: [:new, :create]
+    end
+  end
+
   # Search
-  #
-  get 'search' => "search#show"
+  get 'search' => 'search#show'
+  get 'search/autocomplete' => 'search#autocomplete', as: :search_autocomplete
+  get 'search/count' => 'search#count', as: :search_count
 
-  # API
-  API::API.logger Rails.logger
-  mount API::API => '/api'
+  # JSON Web Token
+  get 'jwt/auth' => 'jwt#auth'
 
-  constraint = lambda { |request| request.env["warden"].authenticate? and request.env['warden'].user.admin? }
-  constraints constraint do
-    mount Sidekiq::Web, at: "/admin/sidekiq", as: :sidekiq
-  end
+  # Health check
+  get 'health_check(/:checks)' => 'health_check#index', as: :health_check
 
-  # Enable Grack support
-  mount Grack::Bundle.new({
-    git_path:     Gitlab.config.git.bin_path,
-    project_root: Gitlab.config.gitlab_shell.repos_path,
-    upload_pack:  Gitlab.config.gitlab_shell.upload_pack,
-    receive_pack: Gitlab.config.gitlab_shell.receive_pack
-  }), at: '/', constraints: lambda { |request| /[-\/\w\.]+\.git\//.match(request.path_info) }
+  # Begin of the /-/ scope.
+  # Use this scope for all new global routes.
+  scope path: '-' do
+    # Autocomplete
+    get '/autocomplete/users' => 'autocomplete#users'
+    get '/autocomplete/users/:id' => 'autocomplete#user'
+    get '/autocomplete/projects' => 'autocomplete#projects'
+    get '/autocomplete/award_emojis' => 'autocomplete#award_emojis'
+    get '/autocomplete/merge_request_target_branches' => 'autocomplete#merge_request_target_branches'
+    get '/autocomplete/deploy_keys_with_owners' => 'autocomplete#deploy_keys_with_owners'
 
-  #
-  # Help
-  #
-  get 'help'                => 'help#index'
-  get 'help/api'            => 'help#api'
-  get 'help/api/:category'  => 'help#api', as: 'help_api_file'
-  get 'help/markdown'       => 'help#markdown'
-  get 'help/permissions'    => 'help#permissions'
-  get 'help/public_access'  => 'help#public_access'
-  get 'help/raketasks'      => 'help#raketasks'
-  get 'help/ssh'            => 'help#ssh'
-  get 'help/system_hooks'   => 'help#system_hooks'
-  get 'help/web_hooks'      => 'help#web_hooks'
-  get 'help/workflow'       => 'help#workflow'
-
-  #
-  # Global snippets
-  #
-  resources :snippets do
-    member do
-      get "raw"
-    end
-  end
-  get "/s/:username" => "snippets#user_index", as: :user_snippets, constraints: { username: /.*/ }
-
-  #
-  # Public namespace
-  #
-  namespace :public do
-    resources :projects, only: [:index]
-    root to: "projects#index"
-  end
-
-  #
-  # Attachments serving
-  #
-  get 'files/:type/:id/:filename' => 'files#download', constraints: { id: /\d+/, type: /[a-z]+/, filename:  /.+/ }
-
-  #
-  # Admin Area
-  #
-  namespace :admin do
-    resources :users, constraints: { id: /[a-zA-Z.\/0-9_\-]+/ } do
-      member do
-        put :team_update
-        put :block
-        put :unblock
-      end
+    Gitlab.ee do
+      get '/autocomplete/project_groups' => 'autocomplete#project_groups'
+      get '/autocomplete/project_routes' => 'autocomplete#project_routes'
+      get '/autocomplete/namespace_routes' => 'autocomplete#namespace_routes'
     end
 
-    resources :groups, constraints: { id: /[^\/]+/ } do
-      member do
-        put :project_update
-        put :project_teams_update
-        delete :remove_project
-      end
-    end
+    get '/whats_new' => 'whats_new#index'
 
-    resources :teams, constraints: { id: /[^\/]+/ } do
-      scope module: :teams do
-        resources :members,   only: [:edit, :update, :destroy, :new, :create]
-        resources :projects,  only: [:edit, :update, :destroy, :new, :create], constraints: { id: /[a-zA-Z.\/0-9_\-]+/ }
-      end
-    end
+    # '/-/health' implemented by BasicHealthCheck middleware
+    get 'liveness' => 'health#liveness'
+    get 'readiness' => 'health#readiness'
+    resources :metrics, only: [:index]
+    mount Peek::Railtie => '/peek', as: 'peek_routes'
 
-    resources :hooks, only: [:index, :create, :destroy] do
-      get :test
-    end
+    get 'runner_setup/platforms' => 'runner_setup#platforms'
 
-    resource :logs, only: [:show]
-    resource :background_jobs, controller: 'background_jobs', only: [:show]
-
-    resources :projects, constraints: { id: /[a-zA-Z.\/0-9_\-]+/ }, only: [:index, :show] do
-      scope module: :projects, constraints: { id: /[a-zA-Z.\/0-9_\-]+/ } do
-        resources :members, only: [:edit, :update, :destroy]
-      end
-    end
-
-    root to: "dashboard#index"
-  end
-
-  get "errors/githost"
-
-  #
-  # Profile Area
-  #
-  resource :profile, only: [:show, :update] do
-    member do
-      get :account
-      get :history
-      get :token
-      get :design
-
-      put :update_password
-      put :reset_private_token
-      put :update_username
-    end
-
-    resource :notifications
-    resource :password
-  end
-
-  resources :keys
-  match "/u/:username" => "users#show", as: :user, constraints: { username: /.*/ }
-
-
-
-  #
-  # Dashboard Area
-  #
-  resource :dashboard, controller: "dashboard" do
-    member do
-      get :projects
-      get :issues
-      get :merge_requests
-    end
-  end
-
-  #
-  # Groups Area
-  #
-  resources :groups, constraints: {id: /(?:[^.]|\.(?!atom$))+/, format: /atom/}  do
-    member do
-      get :issues
-      get :merge_requests
-      get :search
-      get :people
-      post :team_members
-    end
-  end
-
-  #
-  # Teams Area
-  #
-  resources :teams, constraints: {id: /(?:[^.]|\.(?!atom$))+/, format: /atom/} do
-    member do
-      get :issues
-      get :merge_requests
-    end
-    scope module: :teams do
-      resources :members,   only: [:index, :new, :create, :edit, :update, :destroy]
-      resources :projects,  only: [:index, :new, :create, :edit, :update, :destroy], constraints: { id: /[a-zA-Z.0-9_\-\/]+/ }
-    end
-  end
-
-  resources :projects, constraints: { id: /[^\/]+/ }, only: [:new, :create]
-
-  devise_for :users, controllers: { omniauth_callbacks: :omniauth_callbacks, registrations: :registrations }
-
-  #
-  # Project Area
-  #
-  resources :projects, constraints: { id: /(?:[a-zA-Z.0-9_\-]+\/)?[a-zA-Z.0-9_\-]+/ }, except: [:new, :create, :index], path: "/" do
-    member do
-      put :transfer
-      post :fork
-      get :autocomplete_sources
-    end
-
-    resources :blob,    only: [:show], constraints: {id: /.+/}
-    resources :raw,    only: [:show], constraints: {id: /.+/}
-    resources :tree,    only: [:show], constraints: {id: /.+/, format: /(html|js)/ }
-    resources :edit_tree,    only: [:show, :update], constraints: {id: /.+/}, path: 'edit'
-    resources :commit,  only: [:show], constraints: {id: /[[:alnum:]]{6,40}/}
-    resources :commits, only: [:show], constraints: {id: /(?:[^.]|\.(?!atom$))+/, format: /atom/}
-    resources :compare, only: [:index, :create]
-    resources :blame,   only: [:show], constraints: {id: /.+/}
-    resources :network,   only: [:show], constraints: {id: /(?:[^.]|\.(?!json$))+/, format: /json/}
-    resources :graphs, only: [:show], constraints: {id: /(?:[^.]|\.(?!json$))+/, format: /json/}
-    match "/compare/:from...:to" => "compare#show", as: "compare", via: [:get, :post], constraints: {from: /.+/, to: /.+/}
-
-    scope module: :projects do
-      resources :snippets do
-        member do
-          get "raw"
-        end
-      end
-    end
-
-    resources :wikis, only: [:show, :edit, :destroy, :create] do
-      collection do
-        get :pages
-        put ':id' => 'wikis#update'
-        get :git_access
-      end
-
-      member do
-        get "history"
-      end
-    end
-
-    resource :wall, only: [:show] do
-      member do
-        get 'notes'
-      end
-    end
-
-    resource :repository do
-      member do
-        get "branches"
-        get "tags"
-        get "stats"
-        get "archive"
-      end
-    end
-
-    resources :services, constraints: { id: /[^\/]+/ }, only: [:index, :edit, :update] do
-      member do
-        get :test
-      end
-    end
-
-    resources :deploy_keys do
-      member do
-        put :enable
-        put :disable
-      end
-    end
-
-    resources :protected_branches, only: [:index, :create, :destroy]
-
-    resources :refs, only: [] do
-      collection do
-        get "switch"
-      end
-
-      member do
-        # tree viewer logs
-        get "logs_tree", constraints: { id: /[a-zA-Z.\/0-9_\-#%+]+/ }
-        get "logs_tree/:path" => "refs#logs_tree",
-          as: :logs_file,
-          constraints: {
-            id:   /[a-zA-Z.0-9\/_\-#%+]+/,
-            path: /.*/
-          }
-      end
-    end
-
-    resources :merge_requests, constraints: {id: /\d+/}, except: [:destroy] do
-      member do
-        get :diffs
-        get :automerge
-        get :automerge_check
-        get :ci_status
-      end
-
-      collection do
-        get :branch_from
-        get :branch_to
-      end
-    end
-
-    resources :hooks, only: [:index, :create, :destroy] do
-      member do
-        get :test
-      end
-    end
-
-    resources :team, controller: 'team_members', only: [:index]
-    resources :milestones, except: [:destroy]
-
-    resources :labels, only: [:index] do
-      collection do
-        post :generate
-      end
-    end
-
-    resources :issues, except: [:destroy] do
-      collection do
-        post  :bulk_update
-      end
-    end
-
-    resources :team_members, except: [:index, :edit] do
-      collection do
-
-        # Used for import team
-        # from another project
-        get :import
-        post :apply_import
-      end
-    end
-
-    scope module: :projects do
-      resources :teams, only: [] do
+    # Boards resources shared between group and projects
+    resources :boards, only: [] do
+      resources :lists, module: :boards, only: [:index, :create, :update, :destroy] do
         collection do
-          get :available
-          post :assign
+          post :generate
         end
-        member do
-          delete :resign
+
+        resources :issues, only: [:index, :create, :update]
+      end
+
+      resources :issues, module: :boards, only: [:index, :update] do
+        collection do
+          put :bulk_move, format: :json
         end
+      end
+
+      Gitlab.ee do
+        resources :users, module: :boards, only: [:index]
+        resources :milestones, module: :boards, only: [:index]
       end
     end
 
-    resources :notes, only: [:index, :create, :destroy] do
+    get 'acme-challenge/' => 'acme_challenges#show'
+
+    # UserCallouts
+    resources :user_callouts, only: [:create]
+
+    get 'ide' => 'ide#index'
+    get 'ide/*vueroute' => 'ide#index', format: false
+    get 'ide/project/:namespace/:project/merge_requests/:id' => 'ide#index', format: false, as: :ide_merge_request
+
+    draw :operations
+    draw :jira_connect
+
+    Gitlab.ee do
+      draw :security
+      draw :smartcard
+      draw :username
+      draw :trial
+      draw :trial_registration
+      draw :country
+      draw :country_state
+      draw :subscription
+
+      scope '/push_from_secondary/:geo_node_id' do
+        draw :git_http
+      end
+
+      # Used for survey responses
+      resources :survey_responses, only: :index
+    end
+
+    if ENV['GITLAB_CHAOS_SECRET'] || Rails.env.development? || Rails.env.test?
+      resource :chaos, only: [] do
+        get :leakmem
+        get :cpu_spin
+        get :db_spin
+        get :sleep
+        get :kill
+      end
+    end
+
+    # Notification settings
+    resources :notification_settings, only: [:create, :update]
+
+    resources :invites, only: [:show], constraints: { id: /[A-Za-z0-9_-]+/ } do
+      member do
+        post :accept
+        match :decline, via: [:get, :post]
+      end
+    end
+
+    resources :sent_notifications, only: [], constraints: { id: /\h{32}/ } do
+      member do
+        get :unsubscribe
+      end
+    end
+
+    # Spam reports
+    resources :abuse_reports, only: [:new, :create]
+
+    # JWKS (JSON Web Key Set) endpoint
+    # Used by third parties to verify CI_JOB_JWT, placeholder route
+    # in case we decide to move away from doorkeeper-openid_connect
+    get 'jwks' => 'doorkeeper/openid_connect/discovery#keys'
+
+    draw :snippets
+
+    # Product analytics collector
+    match '/collector/i', to: ProductAnalytics::CollectorApp.new, via: :all
+  end
+  # End of the /-/ scope.
+
+  concern :clusterable do
+    resources :clusters, only: [:index, :new, :show, :update, :destroy] do
       collection do
-        post :preview
+        post :create_user
+        post :create_gcp
+        post :create_aws
+        post :authorize_aws_role
+      end
+
+      member do
+        Gitlab.ee do
+          get :metrics, format: :json
+          get :environments, format: :json
+        end
+
+        scope :applications do
+          post '/:application', to: 'clusters/applications#create', as: :install_applications
+          patch '/:application', to: 'clusters/applications#update', as: :update_applications
+          delete '/:application', to: 'clusters/applications#destroy', as: :uninstall_applications
+        end
+
+        get :metrics_dashboard
+        get :'/prometheus/api/v1/*proxy_path', to: 'clusters#prometheus_proxy', as: :prometheus_api
+        get :cluster_status, format: :json
+        delete :clear_cache
       end
     end
   end
 
-  root to: "dashboard#show"
+  # Deprecated routes.
+  # Will be removed as part of https://gitlab.com/gitlab-org/gitlab/-/issues/210024
+  scope as: :deprecated do
+    # Autocomplete
+    get '/autocomplete/users' => 'autocomplete#users'
+    get '/autocomplete/users/:id' => 'autocomplete#user'
+    get '/autocomplete/projects' => 'autocomplete#projects'
+    get '/autocomplete/award_emojis' => 'autocomplete#award_emojis'
+    get '/autocomplete/merge_request_target_branches' => 'autocomplete#merge_request_target_branches'
+
+    Gitlab.ee do
+      get '/autocomplete/project_groups' => 'autocomplete#project_groups'
+      get '/autocomplete/project_routes' => 'autocomplete#project_routes'
+      get '/autocomplete/namespace_routes' => 'autocomplete#namespace_routes'
+    end
+
+    resources :invites, only: [:show], constraints: { id: /[A-Za-z0-9_-]+/ } do
+      member do
+        post :accept
+        match :decline, via: [:get, :post]
+      end
+    end
+
+    resources :sent_notifications, only: [], constraints: { id: /\h{32}/ } do
+      member do
+        get :unsubscribe
+      end
+    end
+
+    resources :abuse_reports, only: [:new, :create]
+  end
+
+  resources :groups, only: [:index, :new, :create] do
+    post :preview_markdown
+  end
+
+  draw :group
+
+  resources :projects, only: [:index, :new, :create]
+
+  get '/projects/:id' => 'projects#resolve'
+
+  draw :git_http
+  draw :api
+  draw :sidekiq
+  draw :help
+  draw :google_api
+  draw :import
+  draw :uploads
+  draw :explore
+  draw :admin
+  draw :profile
+  draw :dashboard
+  draw :user
+  draw :project
+
+  # Issue https://gitlab.com/gitlab-org/gitlab/-/issues/210024
+  scope as: 'deprecated' do
+    draw :snippets
+  end
+
+  # Serve profile routes under /-/ scope.
+  # To ensure an old unscoped routing is used for the UI we need to
+  # add prefix 'as' to the scope routing and place it below original routing.
+  # Issue https://gitlab.com/gitlab-org/gitlab/-/issues/210024
+  scope '-', as: :scoped do
+    draw :profile
+  end
+
+  root to: "root#index"
+
+  get '*unmatched_route', to: 'application#route_not_found'
 end

@@ -1,16 +1,17 @@
-= form_tag search_path, method: :get, class: 'form-inline' do |f|
-  .search-holder
-    = label_tag :search do
-      %span Looking for
-    .input
-      = search_field_tag :search, params[:search], placeholder: "issue 143", class: "input-xxlarge search-text-input", id: "dashboard_search"
-      = hidden_field_tag :project_id, params[:project_id]
-      = hidden_field_tag :group_id, params[:group_id]
-      = hidden_field_tag :search_code, params[:search_code]
-      = submit_tag 'Search', class: "btn btn-primary wide"
-      .prepend-top-10
-        = render 'filter', f: f
+- @hide_top_links = true
+- page_title @search_term
+- @hide_breadcrumbs = true
 
-  .results.prepend-top-10
-    - if params[:search].present?
-      = render 'search/result'
+- if @search_results
+  - page_description(_("%{count} %{scope} for term '%{term}'") % { count: @search_results.formatted_count(@scope), scope: @scope, term: @search_term })
+  - page_card_attributes("Namespace" => @group&.full_path, "Project" => @project&.full_path)
+
+.page-title-holder.d-flex.flex-wrap.justify-content-between
+  %h1.page-title.mr-3= _('Search')
+  = render_if_exists 'search/form_elasticsearch', attrs: { class: 'mb-2 mb-sm-0 align-self-center' }
+
+.gl-mt-3
+  = render 'search/form'
+- if @search_term
+  = render 'search/category'
+  = render 'search/results'

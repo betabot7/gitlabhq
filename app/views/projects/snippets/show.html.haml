@@ -1,13 +1,11 @@
-%h3.page_title
-  %i.icon-lock.cgreen
-  = @snippet.title
+- @content_class = "limit-container-width limited-inner-width-container" unless fluid_layout
+- add_to_breadcrumbs _("Snippets"), project_snippets_path(@project)
+- breadcrumb_title @snippet.to_reference
+- page_title "#{@snippet.title} (#{@snippet.to_reference})", _("Snippets")
 
-  %small.pull-right
-    = "##{@snippet.id}"
-    %span.light
-      by
-      = image_tag gravatar_icon(@snippet.author_email), class: "avatar avatar-inline s16"
-      = @snippet.author_name
-%br
-%div= render 'projects/snippets/blob'
-%div#notes= render "notes/notes_with_form"
+#js-snippet-view{ data: {'qa-selector': 'snippet_view', 'snippet-gid': @snippet.to_global_id} }
+
+.row-content-block.top-block.content-component-block
+  = render 'award_emoji/awards_block', awardable: @snippet, inline: true
+
+#notes.limited-width-notes= render "shared/notes/notes_with_form", :autocomplete => true

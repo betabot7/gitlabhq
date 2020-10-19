@@ -1,26 +1,24 @@
-require "grit"
+# frozen_string_literal: true
 
 module Network
   class Commit
     include ActionView::Helpers::TagHelper
 
-    attr_reader :refs
     attr_accessor :time, :spaces, :parent_spaces
 
-    def initialize(raw_commit, refs)
-      @commit = Gitlab::Git::Commit.new(raw_commit)
+    def initialize(raw_commit)
+      @commit = raw_commit
       @time = -1
       @spaces = []
       @parent_spaces = []
-      @refs = refs || []
     end
 
-    def method_missing(m, *args, &block)
-      @commit.send(m, *args, &block)
+    def method_missing(msg, *args, &block)
+      @commit.__send__(msg, *args, &block) # rubocop:disable GitlabSecurity/PublicSend
     end
 
     def space
-      if @spaces.size > 0
+      if @spaces.present?
         @spaces.first
       else
         0
@@ -28,12 +26,7 @@ module Network
     end
 
     def parents(map)
-      @commit.parents.map do |p|
-        if map.include?(p.id)
-          map[p.id]
-        end
-      end
-      .compact
+      map.values_at(*@commit.parent_ids).compact
     end
   end
 end

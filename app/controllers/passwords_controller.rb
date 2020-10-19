@@ -1,38 +1,72 @@
-class PasswordsController < ApplicationController
-  layout 'navless'
+# frozen_string_literal: true
 
-  skip_before_filter :check_password_expiration
+class PasswordsController < Devise::PasswordsController
+  skip_before_action :require_no_authentication, only: [:edit, :update]
 
-  before_filter :set_user
-  before_filter :set_title
+  before_action :resource_from_email, only: [:create]
+  before_action :check_password_authentication_available, only: [:create]
+  before_action :throttle_reset, only: [:create]
 
-  def new
-  end
+  feature_category :authentication_and_authorization
 
-  def create
-    new_password = params[:user][:password]
-    new_password_confirmation = params[:user][:password_confirmation]
-
-    result = @user.update_attributes(
-      password: new_password,
-      password_confirmation: new_password_confirmation
+  # rubocop: disable CodeReuse/ActiveRecord
+  def edit
+    super
+    reset_password_token = Devise.token_generator.digest(
+      User,
+      :reset_password_token,
+      resource.reset_password_token
     )
 
-    if result
-      @user.update_attributes(password_expires_at: nil)
-      redirect_to root_path, notice: 'Password successfully changed'
-    else
-      render :new
+    unless reset_password_token.nil?
+      user = User.where(
+        reset_password_token: reset_password_token
+      ).first_or_initialize
+
+      unless user.reset_password_period_valid?
+        flash[:alert] = _('Your password reset token has expired.')
+        redirect_to(new_user_password_url(user_email: user['email']))
+      end
+    end
+  end
+  # rubocop: enable CodeReuse/ActiveRecord
+
+  def update
+    super do |resource|
+      if resource.valid?
+        resource.password_automatically_set = false
+        resource.password_expires_at = nil
+        resource.save(validate: false) if resource.changed?
+      end
     end
   end
 
-  private
+  protected
 
-  def set_user
-    @user = current_user
+  def resource_from_email
+    email = resource_params[:email]
+    self.resource = resource_class.find_by_email(email)
   end
 
-  def set_title
-    @title = "New password"
+  def check_password_authentication_available
+    if resource
+      return if resource.allow_password_authentication?
+    else
+      return if Gitlab::CurrentSettings.password_authentication_enabled?
+    end
+
+    redirect_to after_sending_reset_password_instructions_path_for(resource_name),
+      alert: _("Password authentication is unavailable.")
+  end
+
+  def throttle_reset
+    return unless resource && resource.recently_sent_password_reset?
+
+    # Throttle reset attempts, but return a normal message to
+    # avoid user enumeration attack.
+    redirect_to new_user_session_path,
+      notice: I18n.t('devise.passwords.send_paranoid_instructions')
   end
 end
+
+PasswordsController.prepend_if_ee('EE::PasswordsController')

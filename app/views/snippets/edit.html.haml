@@ -1,1 +1,7 @@
-= render "snippets/form", url: snippet_path(@snippet)
+- page_title _("Edit"), "#{@snippet.title} (#{@snippet.to_reference})", _("Snippets")
+- @content_class = "limit-container-width" unless fluid_layout
+
+%h3.page-title
+  = _("Edit Snippet")
+%hr
+= render 'shared/snippets/form', url: gitlab_snippet_path(@snippet)

@@ -1,4 +1,5 @@
+# frozen_string_literal: true
+
 class Admin::BackgroundJobsController < Admin::ApplicationController
-  def show
-  end
+  feature_category :not_owned
 end

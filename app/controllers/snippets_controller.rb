@@ -1,45 +1,37 @@
-class SnippetsController < ApplicationController
-  before_filter :snippet, only: [:show, :edit, :destroy, :update, :raw]
+# frozen_string_literal: true
 
-  # Allow modify snippet
-  before_filter :authorize_modify_snippet!, only: [:edit, :update]
+class SnippetsController < Snippets::ApplicationController
+  include SnippetsActions
+  include PreviewMarkdown
+  include ToggleAwardEmoji
+  include SpammableActions
 
-  # Allow destroy snippet
-  before_filter :authorize_admin_snippet!, only: [:destroy]
+  before_action :snippet, only: [:show, :edit, :raw, :toggle_award_emoji, :mark_as_spam]
 
-  before_filter :set_title
+  before_action :authorize_create_snippet!, only: :new
+  before_action :authorize_read_snippet!, only: [:show, :raw]
+  before_action :authorize_update_snippet!, only: :edit
 
-  respond_to :html
+  skip_before_action :authenticate_user!, only: [:index, :show, :raw]
 
-  layout 'navless'
+  layout 'snippets'
 
   def index
-    @snippets = Snippet.public.fresh.non_expired.page(params[:page]).per(20)
-  end
+    if params[:username].present?
+      @user = UserFinder.new(params[:username]).find_by_username!
 
-  def user_index
-    @user = User.find_by_username(params[:username])
-    @snippets = @user.snippets.fresh.non_expired
+      @snippets = SnippetsFinder.new(current_user, author: @user, scope: params[:scope], sort: sort_param)
+        .execute
+        .page(params[:page])
+        .inc_author
 
-    if @user == current_user
-      @snippets = case params[:scope]
-                  when 'public' then
-                    @snippets.public
-                  when 'private' then
-                    @snippets.private
-                  else
-                    @snippets
-                  end
+      return if redirect_out_of_range(@snippets)
+
+      @noteable_meta_data = noteable_meta_data(@snippets, 'Snippet')
+
+      render 'index'
     else
-      @snippets = @snippets.public
-    end
-
-    @snippets = @snippets.page(params[:page]).per(20)
-
-    if @user == current_user
-      render 'current_user_index'
-    else
-      render 'user_index'
+      redirect_to(current_user ? dashboard_snippets_path : explore_snippets_path)
     end
   end
 
@@ -47,63 +39,12 @@ class SnippetsController < ApplicationController
     @snippet = PersonalSnippet.new
   end
 
-  def create
-    @snippet = PersonalSnippet.new(params[:personal_snippet])
-    @snippet.author = current_user
-
-    if @snippet.save
-      redirect_to snippet_path(@snippet)
-    else
-      respond_with @snippet
-    end
-  end
-
-  def edit
-  end
-
-  def update
-    if @snippet.update_attributes(params[:personal_snippet])
-      redirect_to snippet_path(@snippet)
-    else
-      respond_with @snippet
-    end
-  end
-
-  def show
-  end
-
-  def destroy
-    return access_denied! unless can?(current_user, :admin_personal_snippet, @snippet)
-
-    @snippet.destroy
-
-    redirect_to snippets_path
-  end
-
-  def raw
-    send_data(
-      @snippet.content,
-      type: "text/plain",
-      disposition: 'inline',
-      filename: @snippet.file_name
-    )
-  end
-
   protected
 
-  def snippet
-    @snippet ||= PersonalSnippet.where('author_id = :user_id or private is false', user_id: current_user.id).find(params[:id])
-  end
+  alias_method :awardable, :snippet
+  alias_method :spammable, :snippet
 
-  def authorize_modify_snippet!
-    return render_404 unless can?(current_user, :modify_personal_snippet, @snippet)
-  end
-
-  def authorize_admin_snippet!
-    return render_404 unless can?(current_user, :admin_personal_snippet, @snippet)
-  end
-
-  def set_title
-    @title = 'Snippets'
+  def spammable_path
+    snippet_path(@snippet)
   end
 end

@@ -1,94 +1,94 @@
 .user_new
-  = form_for [:admin, @admin_user] do |f|
-    -if @admin_user.errors.any?
-      #error_explanation
-        %ul.unstyled.alert.alert-error
-          - @admin_user.errors.full_messages.each do |msg|
-            %li= msg
+  = form_for [:admin, @user], html: { class: 'fieldset-form' } do |f|
+    = form_errors(@user)
 
     %fieldset
       %legend Account
-      .clearfix
-        = f.label :name
-        .input
-          = f.text_field :name, required: true, autocomplete: "off"
+      .form-group.row
+        .col-sm-2.col-form-label
+          = f.label :name
+        .col-sm-10
+          = f.text_field :name, required: true, autocomplete: 'off', class: 'form-control'
           %span.help-inline * required
-      .clearfix
-        = f.label :username
-        .input
-          = f.text_field :username, required: true, autocomplete: "off"
+      .form-group.row
+        .col-sm-2.col-form-label
+          = f.label :username
+        .col-sm-10
+          = f.text_field :username, required: true, autocomplete: 'off', autocorrect: 'off', autocapitalize: 'off', spellcheck: false, class: 'form-control'
           %span.help-inline * required
-      .clearfix
-        = f.label :email
-        .input
-          = f.text_field :email, required: true, autocomplete: "off"
+      .form-group.row
+        .col-sm-2.col-form-label
+          = f.label :email
+        .col-sm-10
+          = f.text_field :email, required: true, autocomplete: 'off', class: 'form-control'
           %span.help-inline * required
 
-    - if @admin_user.new_record?
+    - if @user.new_record?
       %fieldset
         %legend Password
-        .clearfix
-          = f.label :password
-          .input
+        .form-group.row
+          .col-sm-2.col-form-label
+            = f.label :password
+          .col-sm-10
             %strong
-              A temporary password will be generated and sent to user.
+              Reset link will be generated and sent to the user.
               %br
-              User will be forced to change it after first sign in
+              User will be forced to set the password on first sign in.
     - else
       %fieldset
         %legend Password
-        .clearfix
-          = f.label :password
-          .input= f.password_field :password, disabled: f.object.force_random_password
-        .clearfix
-          = f.label :password_confirmation
-          .input= f.password_field :password_confirmation, disabled: f.object.force_random_password
+        .form-group.row
+          .col-sm-2.col-form-label
+            = f.label :password
+          .col-sm-10
+            = f.password_field :password, disabled: f.object.force_random_password, class: 'form-control'
+        .form-group.row
+          .col-sm-2.col-form-label
+            = f.label :password_confirmation
+          .col-sm-10
+            = f.password_field :password_confirmation, disabled: f.object.force_random_password, class: 'form-control'
 
-    %fieldset
-      %legend Access
-      .row
-        .span8
-          .clearfix
-            = f.label :projects_limit
-            .input= f.number_field :projects_limit
+    = render partial: 'access_levels', locals: { f: f }
 
-          .clearfix
-            = f.label :can_create_group
-            .input= f.check_box :can_create_group
+    = render_if_exists 'admin/users/namespace_plan_fieldset', f: f
 
-          .clearfix
-            = f.label :can_create_team
-            .input= f.check_box :can_create_team
+    = render_if_exists 'admin/users/limits', f: f
 
-          .clearfix
-            = f.label :admin do
-              %strong.cred Administrator
-            .input= f.check_box :admin
-        .span4
-          - unless @admin_user.new_record?
-            .alert.alert-error
-              - if @admin_user.blocked?
-                %p This user is blocked and is not able to login to GitLab
-                = link_to 'Unblock User', unblock_admin_user_path(@admin_user), method: :put, class: "btn btn-small"
-              - else
-                %p Blocked users will be removed from all projects &amp; will not be able to login to GitLab.
-                = link_to 'Block User', block_admin_user_path(@admin_user), confirm: 'USER WILL BE BLOCKED! Are you sure?', method: :put, class: "btn btn-small btn-remove"
     %fieldset
       %legend Profile
-      .clearfix
-        = f.label :skype
-        .input= f.text_field :skype
-      .clearfix
-        = f.label :linkedin
-        .input= f.text_field :linkedin
-      .clearfix
-        = f.label :twitter
-        .input= f.text_field :twitter
+      .form-group.row
+        .col-sm-2.col-form-label
+          = f.label :avatar
+        .col-sm-10
+          = f.file_field :avatar
 
-    .actions
-      - if @admin_user.new_record?
-        = f.submit 'Create user', class: "btn btn-create"
-        = link_to 'Cancel', admin_users_path, class: "btn btn-cancel"
+      .form-group.row
+        .col-sm-2.col-form-label
+          = f.label :skype
+        .col-sm-10
+          = f.text_field :skype, class: 'form-control'
+      .form-group.row
+        .col-sm-2.col-form-label
+          = f.label :linkedin
+        .col-sm-10
+          = f.text_field :linkedin, class: 'form-control'
+      .form-group.row
+        .col-sm-2.col-form-label
+          = f.label :twitter
+        .col-sm-10
+          = f.text_field :twitter, class: 'form-control'
+      .form-group.row
+        .col-sm-2.col-form-label
+          = f.label :website_url
+        .col-sm-10
+          = f.text_field :website_url, class: 'form-control'
+
+    = render 'admin/users/admin_notes', f: f
+
+    .form-actions
+      - if @user.new_record?
+        = f.submit 'Create user', class: "btn gl-button btn-success"
+        = link_to 'Cancel', admin_users_path, class: "gl-button btn btn-cancel"
       - else
-        = f.submit 'Save changes', class: "btn btn-save"
-        = link_to 'Cancel', admin_user_path(@admin_user), class: "btn btn-cancel"
+        = f.submit 'Save changes', class: "btn gl-button btn-success"
+        = link_to 'Cancel', admin_user_path(@user), class: "btn gl-button btn-cancel"

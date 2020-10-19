@@ -1,15 +1,13 @@
-%h3.page_title
-  Public snippets
-  %small share code pastes with others out of git repository
+- page_title _("By %{user_name}") % { user_name: @user.name }, _("Snippets")
 
-  .pull-right
-    = link_to new_snippet_path, class: "btn btn-small add_new grouped btn-primary", title: "New Snippet" do
-      Add new snippet
-    = link_to user_snippets_path(current_user), class: "btn btn-small grouped"  do
-      My snippets
+%ol.breadcrumb
+  %li.breadcrumb-item
+    = link_to snippets_path do
+      = _("Snippets")
+  %li.breadcrumb-item
+    = @user.name
+  .float-right.d-none.d-sm-block
+    = link_to user_path(@user) do
+      = _("%{user_name} profile page") % { user_name: @user.name }
 
-%hr
-.row
-  .span12
-    = render 'snippets'
-
+= render 'shared/snippets/list'

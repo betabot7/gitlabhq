@@ -1,6 +1,5 @@
-%h3.page_title
-  #{@admin_user.name} &rarr;
-  %i.icon-edit
-  Edit user
+- page_title _("Edit"), @user.name, _("Users")
+%h3.page-title
+  Edit user: #{@user.name}
 %hr
 = render 'form'

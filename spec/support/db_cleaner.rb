@@ -1,22 +1,19 @@
-require 'database_cleaner'
+# frozen_string_literal: true
 
-RSpec.configure do |config|
-  config.before do
-    if example.metadata[:js]
-      DatabaseCleaner.strategy = :truncation
-      Capybara::Selenium::Driver::DEFAULT_OPTIONS[:resynchronize] = true
-    else
-      DatabaseCleaner.strategy = :transaction
-    end
+module DbCleaner
+  def delete_from_all_tables!(except: [])
+    except << 'ar_internal_metadata'
 
-    unless example.metadata[:no_db]
-      DatabaseCleaner.start
-    end
+    DatabaseCleaner.clean_with(:deletion, cache_tables: false, except: except)
   end
 
-  config.after do
-    unless example.metadata[:no_db]
-      DatabaseCleaner.clean
-    end
+  def deletion_except_tables
+    []
+  end
+
+  def setup_database_cleaner
+    DatabaseCleaner[:active_record, { connection: ActiveRecord::Base }]
   end
 end
+
+DbCleaner.prepend_if_ee('EE::DbCleaner')
